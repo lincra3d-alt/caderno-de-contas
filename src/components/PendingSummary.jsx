@@ -38,7 +38,7 @@ export default function PendingSummary({ entries, debts }) {
         <div style={{ flex: "1 1 200px", border: "1px solid var(--gold)", padding: "14px 16px", background: "rgba(176,138,52,0.08)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--gold)", marginBottom: 6 }}>
             <AlertCircle size={15} />
-            <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em" }}>DÍVIDAS EM ABERTO</span>
+            <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em" }}>DESPESAS EM ABERTO</span>
           </div>
           <div className="mono" style={{ fontSize: 19, fontWeight: 700 }}>{formatBRL(totalDividasRestante)}</div>
         </div>

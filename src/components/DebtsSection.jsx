@@ -1,12 +1,12 @@
 import React, { useState, useMemo } from "react";
 import { Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { db } from "../firebase";
-import { collection, addDoc, doc } from "firebase/firestore";
+import { collection, addDoc } from "firebase/firestore";
+import { formatBRL } from "../lib/theme";
+import CategoryIcon from "../lib/categoryIcons";
 
-function formatBRL(value) {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
+// A coleção no banco continua se chamando "dividas" para não perder o que
+// já foi cadastrado. Só os textos da tela falam em despesas.
 export default function DebtsSection({ householdId, user, categories, debts, entries }) {
   const [showForm, setShowForm] = useState(false);
   const [desc, setDesc] = useState("");
@@ -65,14 +65,14 @@ export default function DebtsSection({ householdId, user, categories, debts, ent
     <div style={{ marginBottom: 34 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: "var(--ink-soft)" }}>
-          DÍVIDAS E CONTAS A PAGAR
+          DESPESAS E CONTAS A PAGAR
         </div>
         <button
           onClick={() => setShowForm((s) => !s)}
           className="cdc-btn"
           style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "none", color: "var(--ink)", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
         >
-          <Plus size={14} /> Nova dívida
+          <Plus size={14} /> Nova despesa
         </button>
       </div>
 
@@ -105,7 +105,7 @@ export default function DebtsSection({ householdId, user, categories, debts, ent
 
       {debts.length === 0 ? (
         <div style={{ padding: "20px 16px", textAlign: "center", color: "var(--ink-soft)", border: "1px dashed var(--line)", fontSize: 13 }}>
-          Nenhuma dívida cadastrada.
+          Nenhuma despesa cadastrada.
         </div>
       ) : (
         debts.map((debt) => {
@@ -115,21 +115,26 @@ export default function DebtsSection({ householdId, user, categories, debts, ent
           const isOpen = openDebtId === debt.id;
           const isDone = remaining <= 0;
           return (
-            <div key={debt.id} style={{ border: "1px solid var(--line)", padding: "12px 14px", marginBottom: 8, background: "rgba(255,255,255,0.35)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, cursor: "pointer" }} onClick={() => setOpenDebtId(isOpen ? null : debt.id)}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{debt.desc}</div>
-                  <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{debt.category}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div className="mono" style={{ fontSize: 13, fontWeight: 600, color: isDone ? "var(--income)" : "var(--expense)" }}>
-                    {isDone ? "Quitado" : `Falta ${formatBRL(remaining)}`}
-                  </div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--ink-soft)" }}>
-                    {formatBRL(paid)} de {formatBRL(debt.totalAmount)}
+            <div key={debt.id} className="cdc-card" style={{ padding: "12px 14px", marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setOpenDebtId(isOpen ? null : debt.id)}>
+                <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+                  <CategoryIcon category={debt.category} size={34} iconSize={17} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{debt.desc}</div>
+                    <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{debt.category}</div>
                   </div>
                 </div>
-                {isOpen ? <ChevronUp size={16} color="var(--ink-soft)" /> : <ChevronDown size={16} color="var(--ink-soft)" />}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div className="mono" style={{ fontSize: 13, fontWeight: 600, color: isDone ? "var(--income)" : "var(--expense)" }}>
+                      {isDone ? "Quitado" : `Falta ${formatBRL(remaining)}`}
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--ink-soft)" }}>
+                      {formatBRL(paid)} de {formatBRL(debt.totalAmount)}
+                    </div>
+                  </div>
+                  {isOpen ? <ChevronUp size={16} color="var(--ink-soft)" /> : <ChevronDown size={16} color="var(--ink-soft)" />}
+                </div>
               </div>
 
               <div style={{ height: 6, background: "var(--line)", marginTop: 10, borderRadius: 3, overflow: "hidden" }}>

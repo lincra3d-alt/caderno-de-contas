@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check } from "lucide-react";
+import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check, BookOpen, Pencil, Eye, EyeOff } from "lucide-react";
 import { db, watchAuthState, signInWithGoogle, signOutUser } from "./firebase";
 import { useHousehold } from "./hooks/useHousehold";
 import { useMemberProfiles } from "./hooks/useMemberProfiles";
@@ -8,80 +8,22 @@ import CompareView from "./components/CompareView";
 import TransactionModal from "./components/TransactionModal";
 import PendingSummary from "./components/PendingSummary";
 import BalanceChart from "./components/BalanceChart";
+import ShareView from "./components/ShareView";
+import WelcomeHeader from "./components/WelcomeHeader";
+import CategoryIcon from "./lib/categoryIcons";
+import { theme, cardShadow, globalStyle, formatBRL, formatDateShort, monthKey, monthLabel, addMonths } from "./lib/theme";
 import {
   collection,
   addDoc,
   deleteDoc,
   doc,
   updateDoc,
+  getDoc,
+  setDoc,
   onSnapshot,
   query,
   orderBy,
 } from "firebase/firestore";
-
-function formatBRL(value) {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-function formatDateShort(iso) {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y.slice(2)}`;
-}
-
-function addMonths(iso, n) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const date = new Date(y, m - 1 + n, d);
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-const MONTH_NAMES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-
-function monthKey(iso) {
-  return iso.slice(0, 7);
-}
-
-function monthLabel(key) {
-  const [y, m] = key.split("-");
-  return `${MONTH_NAMES[parseInt(m, 10) - 1]}/${y.slice(2)}`;
-}
-
-const theme = {
-  "--paper": "#E4EAF0",
-  "--paper-dark": "#D3DCE6",
-  "--ink": "#1B2A3D",
-  "--ink-soft": "#4C5C6E",
-  "--line": "#AEBBC8",
-  "--expense": "#B4432A",
-  "--income": "#2F6E4F",
-  "--gold": "#B08A34",
-};
-
-const cardShadow = "0 1px 3px rgba(27,42,61,0.07)";
-
-const globalStyle = `
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
-  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
-  .cdc-perf {
-    height: 14px;
-    background-image: radial-gradient(circle at 10px 7px, var(--paper) 5px, transparent 5.5px);
-    background-size: 20px 14px;
-    background-repeat: repeat-x;
-    background-color: var(--ink);
-  }
-  .cdc-row { transition: background 0.12s ease; cursor: pointer; }
-  .cdc-row:hover { background: var(--paper-dark); }
-  .cdc-btn { transition: transform 0.12s ease, box-shadow 0.12s ease; }
-  .cdc-btn:active { transform: scale(0.97); }
-  .cdc-toggle { transition: background 0.15s ease, color 0.15s ease; }
-  .cdc-del { opacity: 0; transition: opacity 0.15s ease; }
-  .cdc-row:hover .cdc-del { opacity: 1; }
-  .cdc-tab { transition: background 0.15s ease, color 0.15s ease; }
-  .cdc-status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
-  @media (max-width: 640px) { .cdc-del { opacity: 1; } }
-`;
 
 function LoginScreen() {
   const [busy, setBusy] = useState(false);
@@ -143,12 +85,15 @@ function LoginScreen() {
   );
 }
 
-function InviteBar({ user, householdId, members, joinHousehold }) {
+function CadernosBar({ user, householdId, households, switchHousehold, createHousehold, renameHousehold, members, joinHousehold }) {
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
   const [copied, setCopied] = useState(false);
   const [joinMsg, setJoinMsg] = useState(null);
   const [joining, setJoining] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const active = households.find((h) => h.id === householdId);
 
   async function handleCopy() {
     try {
@@ -174,16 +119,79 @@ function InviteBar({ user, householdId, members, joinHousehold }) {
     }
   }
 
+  async function handleCreate() {
+    const name = window.prompt("Nome do novo caderno (ex: Pessoal, Casa, Viagem):", "Meu caderno pessoal");
+    if (name === null) return;
+    setCreating(true);
+    await createHousehold(name);
+    setCreating(false);
+  }
+
+  function handleRename() {
+    if (!active) return;
+    const name = window.prompt("Novo nome do caderno:", active.name);
+    if (name === null || !name.trim()) return;
+    renameHousehold(active.id, name);
+  }
+
   return (
     <div style={{ borderBottom: "1px solid var(--line)", background: "rgba(255,255,255,0.5)" }}>
-      <div style={{ maxWidth: 800, margin: "0 auto", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <button
-          onClick={() => setOpen((o) => !o)}
-          style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", fontSize: 13, fontWeight: 600, padding: 0 }}
-        >
-          <Users size={15} />
-          {members.length > 1 ? `${members.length} pessoas neste caderno` : "Convidar pessoas"}
-        </button>
+      <div style={{ maxWidth: 800, margin: "0 auto", padding: "10px 24px 0" }}>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 10, alignItems: "center" }}>
+          {households.map((h) => (
+            <button
+              key={h.id}
+              onClick={() => switchHousehold(h.id)}
+              className="cdc-tab"
+              style={{
+                flex: "0 0 auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "7px 14px",
+                border: "1px solid var(--line)",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+                background: h.id === householdId ? "var(--ink)" : "#fff",
+                color: h.id === householdId ? "var(--paper)" : "var(--ink-soft)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <BookOpen size={13} />
+              {h.name}
+              {h.members.length > 1 && (
+                <span className="mono" style={{ fontSize: 10, opacity: 0.75 }}>· {h.members.length}</span>
+              )}
+            </button>
+          ))}
+          <button
+            onClick={handleCreate}
+            disabled={creating}
+            className="cdc-btn"
+            style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 4, border: "1px dashed var(--line)", background: "none", cursor: creating ? "default" : "pointer", color: "var(--ink-soft)", fontSize: 12, fontWeight: 600, padding: "7px 12px" }}
+          >
+            <Plus size={13} /> Novo caderno
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 800, margin: "0 auto", padding: "0 24px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <button
+            onClick={() => setOpen((o) => !o)}
+            style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", fontSize: 13, fontWeight: 600, padding: 0 }}
+          >
+            <Users size={15} />
+            {members.length > 1 ? `${members.length} pessoas neste caderno` : "Convidar pessoas"}
+          </button>
+          <button
+            onClick={handleRename}
+            style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", fontSize: 12 }}
+          >
+            <Pencil size={12} /> Renomear este caderno
+          </button>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {user.photoURL && (
             <img src={user.photoURL} alt="" style={{ width: 26, height: 26, borderRadius: "50%" }} />
@@ -202,7 +210,7 @@ function InviteBar({ user, householdId, members, joinHousehold }) {
         <div style={{ maxWidth: 800, margin: "0 auto", padding: "0 24px 16px", display: "flex", flexWrap: "wrap", gap: 24 }}>
           <div style={{ flex: "1 1 260px" }}>
             <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>
-              Compartilhe este código para alguém entrar no seu caderno:
+              Compartilhe este código para alguém entrar neste caderno:
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <div className="mono" style={{ flex: 1, padding: "8px 10px", background: "var(--paper)", border: "1px solid var(--line)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -244,7 +252,45 @@ function InviteBar({ user, householdId, members, joinHousehold }) {
   );
 }
 
-function Ledger({ user, householdId, members, joinHousehold, categories, addCategory }) {
+function CategoryBreakdown({ entries }) {
+  const byCategory = useMemo(() => {
+    const map = {};
+    entries.filter((e) => e.type === "despesa").forEach((e) => {
+      map[e.category] = (map[e.category] || 0) + e.amount;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [entries]);
+
+  const total = byCategory.reduce((s, [, v]) => s + v, 0);
+  if (byCategory.length === 0) return null;
+
+  return (
+    <div className="cdc-card" style={{ padding: "16px 18px", marginBottom: 24 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: "var(--ink-soft)", marginBottom: 12 }}>
+        POR CATEGORIA NO MÊS
+      </div>
+      {byCategory.map(([cat, amount]) => {
+        const pct = total > 0 ? (amount / total) * 100 : 0;
+        return (
+          <div key={cat} style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
+            <CategoryIcon category={cat} size={30} iconSize={15} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, marginBottom: 4 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat}</span>
+                <span className="mono" style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatBRL(amount)}</span>
+              </div>
+              <div style={{ height: 5, background: "var(--line)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: "var(--gold)" }} />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Ledger({ user, householdId, households, switchHousehold, createHousehold, renameHousehold, members, joinHousehold, categories, addCategory }) {
   const [entries, setEntries] = useState([]);
   const [debts, setDebts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -253,6 +299,7 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [balanceScope, setBalanceScope] = useState("mes"); // mes | total
+  const [hideBalance, setHideBalance] = useState(false);
 
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
@@ -264,12 +311,19 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
   const [jaPago, setJaPago] = useState(true);
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [alsoAddTo, setAlsoAddTo] = useState(() => new Set());
 
   const profiles = useMemberProfiles(members);
+  const activeHousehold = households.find((h) => h.id === householdId);
+  const otherHouseholds = households.filter((h) => h.id !== householdId);
 
   useEffect(() => {
     if (categories.length && !category) setCategory(categories[0]);
   }, [categories, category]);
+
+  useEffect(() => {
+    setAlsoAddTo(new Set());
+  }, [householdId]);
 
   useEffect(() => {
     if (!householdId) return;
@@ -358,12 +412,22 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
     setShowNewCategory(false);
   }
 
+  function toggleAlsoAddTo(id) {
+    setAlsoAddTo((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   async function handleAdd(e) {
     e.preventDefault();
     const value = parseFloat(amount.replace(",", "."));
     if (!desc.trim() || !value || value <= 0 || !householdId) return;
 
     const status = type === "despesa" ? (jaPago ? "pago" : "pendente") : "pago";
+    const targets = [householdId, ...Array.from(alsoAddTo)];
 
     const base = {
       type,
@@ -374,33 +438,46 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
       authorPhoto: user.photoURL,
     };
 
+    const parcelasCount = Math.max(2, Math.min(48, parseInt(numParcelas, 10) || 2));
+
     try {
-      if (parcelado && numParcelas > 1) {
-        const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        for (let i = 0; i < numParcelas; i++) {
-          await addDoc(collection(db, "households", householdId, "lancamentos"), {
-            ...base,
-            desc: `${desc.trim()} (${i + 1}/${numParcelas})`,
-            amount: value,
-            date: addMonths(date, i),
-            installmentGroupId: groupId,
-            installmentIndex: i + 1,
-            installmentTotal: numParcelas,
-          });
-        }
+      if (parcelado && parcelasCount > 1) {
+        await Promise.all(
+          targets.map(async (hid) => {
+            const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${hid.slice(0, 4)}`;
+            await Promise.all(
+              Array.from({ length: parcelasCount }, (_, i) =>
+                addDoc(collection(db, "households", hid, "lancamentos"), {
+                  ...base,
+                  desc: `${desc.trim()} (${i + 1}/${parcelasCount})`,
+                  amount: value,
+                  date: addMonths(date, i),
+                  installmentGroupId: groupId,
+                  installmentIndex: i + 1,
+                  installmentTotal: parcelasCount,
+                })
+              )
+            );
+          })
+        );
       } else {
-        await addDoc(collection(db, "households", householdId, "lancamentos"), {
-          ...base,
-          desc: desc.trim(),
-          amount: value,
-          date,
-        });
+        await Promise.all(
+          targets.map((hid) =>
+            addDoc(collection(db, "households", hid, "lancamentos"), {
+              ...base,
+              desc: desc.trim(),
+              amount: value,
+              date,
+            })
+          )
+        );
       }
       setDesc("");
       setAmount("");
       setParcelado(false);
       setNumParcelas(2);
       setJaPago(true);
+      setAlsoAddTo(new Set());
     } catch (err) {
       console.error(err);
       setSaveError(true);
@@ -418,10 +495,61 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
     }
   }
 
+  async function handleUpdate(id, changes) {
+    if (!householdId) return;
+    try {
+      await updateDoc(doc(db, "households", householdId, "lancamentos", id), changes);
+
+      // Se a parcela editada tiver um link compartilhado, mantém o link em dia.
+      const target = entries.find((e) => e.id === id);
+      if (target?.installmentGroupId) {
+        const shareRef = doc(db, "shares", target.installmentGroupId);
+        const shareSnap = await getDoc(shareRef);
+        if (shareSnap.exists()) {
+          const groupEntries = entries
+            .map((e) => (e.id === id ? { ...e, ...changes } : e))
+            .filter((e) => e.installmentGroupId === target.installmentGroupId)
+            .sort((a, b) => a.installmentIndex - b.installmentIndex);
+          await setDoc(
+            shareRef,
+            {
+              parcelas: groupEntries.map((g) => ({ index: g.installmentIndex, date: g.date, status: g.status || "pago" })),
+              updatedAt: Date.now(),
+            },
+            { merge: true }
+          );
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      setSaveError(true);
+    }
+  }
+
   async function handleTogglePaid(id, newStatus) {
     if (!householdId) return;
     try {
       await updateDoc(doc(db, "households", householdId, "lancamentos", id), { status: newStatus });
+
+      const target = entries.find((e) => e.id === id);
+      if (target?.installmentGroupId) {
+        const shareRef = doc(db, "shares", target.installmentGroupId);
+        const shareSnap = await getDoc(shareRef);
+        if (shareSnap.exists()) {
+          const groupEntries = entries
+            .map((e) => (e.id === id ? { ...e, status: newStatus } : e))
+            .filter((e) => e.installmentGroupId === target.installmentGroupId)
+            .sort((a, b) => a.installmentIndex - b.installmentIndex);
+          await setDoc(
+            shareRef,
+            {
+              parcelas: groupEntries.map((g) => ({ index: g.installmentIndex, date: g.date, status: g.status || "pago" })),
+              updatedAt: Date.now(),
+            },
+            { merge: true }
+          );
+        }
+      }
     } catch (err) {
       console.error(err);
       setSaveError(true);
@@ -437,7 +565,7 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
               <div className="mono" style={{ fontSize: 12, letterSpacing: "0.18em", opacity: 0.65, marginBottom: 5 }}>
-                CADERNO Nº 01
+                {(activeHousehold?.name || "CADERNO").toUpperCase()}
               </div>
               <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>Caderno de Contas</h1>
             </div>
@@ -449,7 +577,16 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
       </div>
       <div className="cdc-perf" />
 
-      <InviteBar user={user} householdId={householdId} members={members} joinHousehold={joinHousehold} />
+      <CadernosBar
+        user={user}
+        householdId={householdId}
+        households={households}
+        switchHousehold={switchHousehold}
+        createHousehold={createHousehold}
+        renameHousehold={renameHousehold}
+        members={members}
+        joinHousehold={joinHousehold}
+      />
 
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "28px 24px 64px" }}>
 
@@ -484,70 +621,71 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
           <CompareView entries={entries} members={members} profiles={profiles} />
         ) : (
           <>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "8px 0 32px" }}>
-              <div
-                style={{
-                  border: "3px solid var(--gold)",
-                  borderRadius: "50%",
-                  width: 172,
-                  height: 172,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transform: "rotate(-4deg)",
-                  color: "var(--gold)",
-                  position: "relative",
-                  boxShadow: "0 4px 14px rgba(176,138,52,0.18)",
-                  background: "rgba(255,255,255,0.3)",
-                }}
-              >
-                <div style={{ position: "absolute", inset: 6, border: "1px solid var(--gold)", borderRadius: "50%", opacity: 0.55 }} />
-                <div className="mono" style={{ fontSize: 10, letterSpacing: "0.16em", marginBottom: 4 }}>
-                  {balanceScope === "mes" ? `SALDO · ${monthLabel(selectedMonth).toUpperCase()}` : "SALDO TOTAL"}
-                </div>
-                <div
-                  className="mono"
-                  style={{
-                    fontSize: displayedBalance < 0 ? 19 : 21,
-                    fontWeight: 700,
-                    color: displayedBalance >= 0 ? "var(--income)" : "var(--expense)",
-                    textAlign: "center",
-                    lineHeight: 1.1,
-                  }}
-                >
-                  {loading ? "..." : formatBRL(displayedBalance)}
-                </div>
-              </div>
-              <select
-                value={balanceScope}
-                onChange={(e) => setBalanceScope(e.target.value)}
-                className="mono"
-                style={{ marginTop: 12, fontSize: 11, padding: "5px 8px", border: "1px solid var(--line)", background: "#fff", color: "var(--ink-soft)" }}
-              >
-                <option value="mes">Valor do mês selecionado</option>
-                <option value="total">Valor de todo o período</option>
-              </select>
-            </div>
+            <WelcomeHeader user={user} entries={visibleEntries} currentMonth={selectedMonth} />
 
-            <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 200px", border: "1px solid var(--line)", padding: "16px 18px", background: "#fff", boxShadow: cardShadow }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--income)", marginBottom: 6 }}>
-                  <ArrowUpRight size={16} />
-                  <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em" }}>ENTRADAS</span>
+            <div style={{ display: "flex", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
+              <div className="cdc-card" style={{ flex: "1 1 300px", padding: "18px 20px" }}>
+                <div className="cdc-accent" style={{ borderLeftColor: displayedBalance >= 0 ? "var(--income)" : "var(--expense)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: 12, color: "var(--ink-soft)", fontWeight: 600 }}>
+                      {balanceScope === "mes" ? `Saldo de ${monthLabel(selectedMonth)}` : "Saldo geral"}
+                    </span>
+                    <button
+                      onClick={() => setHideBalance((v) => !v)}
+                      aria-label={hideBalance ? "Mostrar saldo" : "Esconder saldo"}
+                      style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", display: "flex", padding: 0 }}
+                    >
+                      {hideBalance ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 27,
+                      fontWeight: 700,
+                      lineHeight: 1.2,
+                      marginTop: 4,
+                      color: displayedBalance >= 0 ? "var(--income)" : "var(--expense)",
+                    }}
+                  >
+                    {loading ? "..." : hideBalance ? "R$ ••••••" : formatBRL(displayedBalance)}
+                  </div>
                 </div>
-                <div className="mono" style={{ fontSize: 21, fontWeight: 600 }}>{formatBRL(totalIncome)}</div>
+                <select
+                  value={balanceScope}
+                  onChange={(e) => setBalanceScope(e.target.value)}
+                  style={{ marginTop: 14, fontSize: 11, padding: "6px 8px", border: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink-soft)", width: "100%" }}
+                >
+                  <option value="mes">Valor do mês selecionado</option>
+                  <option value="total">Valor de todo o período</option>
+                </select>
               </div>
-              <div style={{ flex: "1 1 200px", border: "1px solid var(--line)", padding: "16px 18px", background: "#fff", boxShadow: cardShadow }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--expense)", marginBottom: 6 }}>
-                  <ArrowDownRight size={16} />
-                  <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em" }}>SAÍDAS</span>
+
+              <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 14 }}>
+                <div className="cdc-card" style={{ flex: 1, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(47,110,79,0.13)", color: "var(--income)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto" }}>
+                      <ArrowUpRight size={17} />
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", letterSpacing: "0.04em" }}>ENTRADAS</span>
+                  </div>
+                  <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: "var(--income)" }}>{formatBRL(totalIncome)}</div>
                 </div>
-                <div className="mono" style={{ fontSize: 21, fontWeight: 600 }}>{formatBRL(totalExpense)}</div>
+                <div className="cdc-card" style={{ flex: 1, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(180,67,42,0.13)", color: "var(--expense)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto" }}>
+                      <ArrowDownRight size={17} />
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", letterSpacing: "0.04em" }}>SAÍDAS</span>
+                  </div>
+                  <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: "var(--expense)" }}>{formatBRL(totalExpense)}</div>
+                </div>
               </div>
             </div>
 
             <PendingSummary entries={entries} debts={debts} />
+
+            <CategoryBreakdown entries={monthEntries} />
 
             <BalanceChart entries={entries} />
 
@@ -636,20 +774,36 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-soft)", cursor: "pointer", flexWrap: "wrap" }}>
                   <input type="checkbox" checked={parcelado} onChange={(e) => setParcelado(e.target.checked)} />
-                  Parcelar essa compra
+                  <span>Parcelar essa compra</span>
                   {parcelado && (
                     <>
-                      em
+                      <span>em</span>
                       <input
                         type="number"
                         min={2}
                         max={48}
                         value={numParcelas}
-                        onChange={(e) => setNumParcelas(Math.max(2, parseInt(e.target.value) || 2))}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "") {
+                            setNumParcelas("");
+                            return;
+                          }
+                          const n = parseInt(raw, 10);
+                          if (!Number.isNaN(n)) setNumParcelas(n);
+                        }}
+                        onBlur={() => {
+                          setNumParcelas((prev) => {
+                            const n = parseInt(prev, 10);
+                            return Math.max(2, Math.min(48, Number.isNaN(n) ? 2 : n));
+                          });
+                        }}
                         className="mono"
                         style={{ width: 50, padding: "4px 6px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 12 }}
                       />
-                      vezes de {amount ? formatBRL(parseFloat(amount.replace(",", ".")) || 0) : "R$0,00"} (total {amount ? formatBRL((parseFloat(amount.replace(",", ".")) || 0) * numParcelas) : "R$0,00"})
+                      <span>
+                        vezes de {amount ? formatBRL(parseFloat(amount.replace(",", ".")) || 0) : "R$0,00"} (total {amount ? formatBRL((parseFloat(amount.replace(",", ".")) || 0) * (numParcelas || 0)) : "R$0,00"})
+                      </span>
                     </>
                   )}
                 </label>
@@ -660,6 +814,36 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
                     Já paguei essa conta
                   </label>
                 )}
+
+                {otherHouseholds.length > 0 && (
+                  <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px dotted var(--line)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--ink-soft)", marginBottom: 8 }}>
+                      TAMBÉM ADICIONAR EM
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {otherHouseholds.map((h) => (
+                        <label
+                          key={h.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 12,
+                            color: "var(--ink-soft)",
+                            cursor: "pointer",
+                            border: "1px solid var(--line)",
+                            padding: "6px 10px",
+                            background: alsoAddTo.has(h.id) ? "var(--paper-dark)" : "#fff",
+                          }}
+                        >
+                          <input type="checkbox" checked={alsoAddTo.has(h.id)} onChange={() => toggleAlsoAddTo(h.id)} />
+                          <BookOpen size={12} />
+                          {h.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </form>
 
@@ -668,7 +852,7 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
             <div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: "var(--ink-soft)" }}>
-                  EXTRATO {viewMode === "meu" ? "— SÓ O SEU" : ""}
+                  EXTRATO {viewMode === "meu" ? "· SÓ O SEU" : ""}
                 </div>
                 {monthEntries.length > 0 && (
                   <div className="mono" style={{ fontSize: 11, color: "var(--ink-soft)" }}>
@@ -711,14 +895,7 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
                   Nenhum lançamento em {monthLabel(selectedMonth)}.
                 </div>
               ) : (
-                <div style={{ border: "1px solid var(--line)", background: "#fff", boxShadow: cardShadow }}>
-                  <div className="mono" style={{ display: "grid", gridTemplateColumns: "70px 1fr 110px 100px 28px", gap: 8, fontSize: 11, color: "var(--ink-soft)", padding: "10px 12px", borderBottom: "2px solid var(--ink)", letterSpacing: "0.04em" }}>
-                    <div>DATA</div>
-                    <div>DESCRIÇÃO</div>
-                    <div>CATEGORIA</div>
-                    <div style={{ textAlign: "right" }}>VALOR</div>
-                    <div></div>
-                  </div>
+                <div className="cdc-card">
                   {monthEntries.map((e) => {
                     const pending = e.type === "despesa" && (e.status || "pago") === "pendente";
                     return (
@@ -726,36 +903,43 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
                         key={e.id}
                         className="cdc-row"
                         onClick={() => setSelectedEntry(e)}
-                        style={{ display: "grid", gridTemplateColumns: "70px 1fr 110px 100px 28px", gap: 8, alignItems: "center", padding: "12px", borderBottom: "1px dotted var(--line)", fontSize: 13 }}
+                        style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderBottom: "1px dotted var(--line)", fontSize: 13 }}
                       >
-                        <div className="mono" style={{ fontSize: 12, color: "var(--ink-soft)" }}>{formatDateShort(e.date)}</div>
-                        <div style={{ overflow: "hidden" }}>
-                          <div style={{ display: "flex", alignItems: "center", textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}>
-                            {pending && <span className="cdc-status-dot" style={{ background: "var(--expense)" }} title="Pendente" />}
-                            {e.desc}
+                        <CategoryIcon category={e.category} size={34} iconSize={17} />
+
+                        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
+                            {pending && <span className="cdc-status-dot" style={{ background: "var(--expense)", flex: "0 0 auto" }} title="Pendente" />}
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontWeight: 500 }}>{e.desc}</span>
+                            {e.installmentGroupId && (
+                              <span className="cdc-badge" style={{ flex: "0 0 auto" }}>{e.installmentIndex}/{e.installmentTotal}</span>
+                            )}
                           </div>
-                          {members.length > 1 && (
-                            <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>{e.authorName}</div>
-                          )}
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {formatDateShort(e.date)} · {e.category}
+                            {members.length > 1 && e.authorName ? ` · ${e.authorName}` : ""}
+                          </div>
                         </div>
-                        <div style={{ fontSize: 11, color: "var(--ink-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {e.category}
-                        </div>
+
                         <div
                           className="mono"
                           style={{
+                            flex: "0 0 auto",
                             textAlign: "right",
-                            fontWeight: 600,
+                            fontWeight: 700,
+                            fontVariantNumeric: "tabular-nums",
+                            whiteSpace: "nowrap",
                             color: e.type === "receita" ? "var(--income)" : "var(--expense)",
                           }}
                         >
-                          {e.type === "receita" ? "+" : "−"}{formatBRL(e.amount).replace("R$", "").trim()}
+                          {e.type === "receita" ? "+" : "−"} {formatBRL(e.amount)}
                         </div>
+
                         <button
                           onClick={(ev) => { ev.stopPropagation(); handleDelete(e.id); }}
                           className="cdc-del"
                           aria-label="Excluir lançamento"
-                          style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", display: "flex", justifyContent: "center" }}
+                          style={{ flex: "0 0 auto", border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", display: "flex", justifyContent: "center", width: 20 }}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -780,9 +964,11 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
           entry={selectedEntry}
           allEntries={entries}
           debts={debts}
+          categories={categories}
           onClose={() => setSelectedEntry(null)}
           onTogglePaid={handleTogglePaid}
           onDelete={handleDelete}
+          onUpdate={handleUpdate}
         />
       )}
     </div>
@@ -790,8 +976,29 @@ function Ledger({ user, householdId, members, joinHousehold, categories, addCate
 }
 
 export default function App() {
+  const path = typeof window !== "undefined" ? window.location.pathname : "";
+  const shareMatch = path.match(/^\/share\/([^/]+)\/?$/);
+  if (shareMatch) {
+    return <ShareView id={shareMatch[1]} />;
+  }
+
+  return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
   const [user, setUser] = useState(undefined);
-  const { householdId, members, categories, loading: hLoading, joinHousehold, addCategory } = useHousehold(user || null);
+  const {
+    householdId,
+    households,
+    members,
+    categories,
+    loading: hLoading,
+    switchHousehold,
+    createHousehold,
+    renameHousehold,
+    joinHousehold,
+    addCategory,
+  } = useHousehold(user || null);
 
   useEffect(() => {
     const unsubscribe = watchAuthState((u) => setUser(u));
@@ -814,6 +1021,10 @@ export default function App() {
     <Ledger
       user={user}
       householdId={householdId}
+      households={households}
+      switchHousehold={switchHousehold}
+      createHousehold={createHousehold}
+      renameHousehold={renameHousehold}
       members={members}
       joinHousehold={joinHousehold}
       categories={categories}
