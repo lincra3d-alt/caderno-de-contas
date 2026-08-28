@@ -26,7 +26,7 @@ export const globalStyle = `
   .cdc-btn { transition: transform 0.12s ease, box-shadow 0.12s ease; }
   .cdc-btn:active { transform: scale(0.97); }
   .cdc-toggle { transition: background 0.15s ease, color 0.15s ease; }
-  .cdc-del { opacity: 0; transition: opacity 0.15s ease; }
+  .cdc-del { opacity: 0.4; transition: opacity 0.15s ease; }
   .cdc-row:hover .cdc-del { opacity: 1; }
   .cdc-tab { transition: background 0.15s ease, color 0.15s ease; }
   .cdc-status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
@@ -37,7 +37,7 @@ export const globalStyle = `
   .cdc-list-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px dotted var(--line); }
   .cdc-list-row:last-child { border-bottom: none; }
   .cdc-field { width: 100%; padding: 9px 11px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font-size: 13px; font-family: inherit; box-sizing: border-box; }
-  @media (max-width: 640px) { .cdc-del { opacity: 1; } }
+  @media (max-width: 640px) { .cdc-del { opacity: 0.6; } }
 `;
 
 export const MONTH_NAMES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];

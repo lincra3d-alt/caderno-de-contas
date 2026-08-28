@@ -117,8 +117,11 @@ export default function WelcomeHeader({ user, entries, currentMonth }) {
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "var(--ink)" }}>
             <CalendarClock size={15} color="var(--gold)" style={{ marginTop: 1, flex: "0 0 auto" }} />
             <span>
-              Hoje vence {vencemHoje.length === 1 ? <strong>{vencemHoje[0].desc}</strong> : <><strong>{vencemHoje.length}</strong> contas</>}
-              {" "}no total de <strong className="mono">{formatBRL(totalHoje)}</strong>.
+              {vencemHoje.length === 1 ? (
+                <>Hoje vence <strong>{vencemHoje[0].desc}</strong>, de <strong className="mono">{formatBRL(totalHoje)}</strong>.</>
+              ) : (
+                <>Hoje vencem <strong>{vencemHoje.length}</strong> contas, somando <strong className="mono">{formatBRL(totalHoje)}</strong>.</>
+              )}
             </span>
           </div>
         )}

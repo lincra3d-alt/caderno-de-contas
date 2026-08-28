@@ -3,7 +3,7 @@ import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check,
 import { db, watchAuthState, signInWithGoogle, signOutUser } from "./firebase";
 import { useHousehold } from "./hooks/useHousehold";
 import { useMemberProfiles } from "./hooks/useMemberProfiles";
-import DebtsSection from "./components/DebtsSection";
+import CardsSection from "./components/CardsSection";
 import CompareView from "./components/CompareView";
 import TransactionModal from "./components/TransactionModal";
 import PendingSummary from "./components/PendingSummary";
@@ -312,8 +312,10 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [alsoAddTo, setAlsoAddTo] = useState(() => new Set());
+  const [cardId, setCardId] = useState("");
 
   const profiles = useMemberProfiles(members);
+  const cartoes = useMemo(() => debts.filter((d) => d.tipo === "cartao"), [debts]);
   const activeHousehold = households.find((h) => h.id === householdId);
   const otherHouseholds = households.filter((h) => h.id !== householdId);
 
@@ -323,7 +325,13 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
 
   useEffect(() => {
     setAlsoAddTo(new Set());
+    setCardId("");
   }, [householdId]);
+
+  // Se o cartão escolhido for excluído, limpa a seleção do formulário.
+  useEffect(() => {
+    if (cardId && !cartoes.some((c) => c.id === cardId)) setCardId("");
+  }, [cartoes, cardId]);
 
   useEffect(() => {
     if (!householdId) return;
@@ -436,6 +444,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
       addedBy: user.uid,
       authorName: user.displayName,
       authorPhoto: user.photoURL,
+      ...(cardId && type === "despesa" ? { cardId } : {}),
     };
 
     const parcelasCount = Math.max(2, Math.min(48, parseInt(numParcelas, 10) || 2));
@@ -746,7 +755,20 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                     {categories.map((c) => (<option key={c} value={c}>{c}</option>))}
                     <option value="__new__">+ Nova categoria...</option>
                   </select>
-                ) : (
+                ) : null}
+
+                {type === "despesa" && cartoes.length > 0 && (
+                  <select
+                    value={cardId}
+                    onChange={(ev) => setCardId(ev.target.value)}
+                    style={{ padding: "10px 12px", border: "1px solid var(--line)", background: cardId ? "#fff" : "var(--paper)", color: "var(--ink)", fontSize: 13 }}
+                  >
+                    <option value="">Dinheiro ou débito</option>
+                    {cartoes.map((c) => (<option key={c.id} value={c.id}>Cartão {c.nome}</option>))}
+                  </select>
+                )}
+
+                {showNewCategory && (
                   <div style={{ display: "flex", gap: 6 }}>
                     <input
                       type="text"
@@ -847,7 +869,13 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
               </div>
             </form>
 
-            <DebtsSection householdId={householdId} user={user} categories={categories} debts={debts} entries={entries} />
+            <CardsSection
+              householdId={householdId}
+              user={user}
+              cards={debts}
+              entries={entries}
+              selectedMonth={selectedMonth}
+            />
 
             <div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -917,6 +945,9 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                           </div>
                           <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {formatDateShort(e.date)} · {e.category}
+                            {e.cardId && cartoes.find((c) => c.id === e.cardId)
+                              ? ` · ${cartoes.find((c) => c.id === e.cardId).nome}`
+                              : ""}
                             {members.length > 1 && e.authorName ? ` · ${e.authorName}` : ""}
                           </div>
                         </div>

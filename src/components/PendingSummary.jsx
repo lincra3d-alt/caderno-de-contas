@@ -23,11 +23,14 @@ export default function PendingSummary({ entries, debts }) {
     return pendingEntries.filter((e) => e.date <= untilDate).reduce((s, e) => s + e.amount, 0);
   }, [pendingEntries, untilDate]);
 
+  // Cartões de crédito não entram aqui: eles têm a própria seção de fatura.
   const totalDividasRestante = useMemo(() => {
-    return debts.reduce((sum, debt) => {
-      const paid = entries.filter((e) => e.debtId === debt.id).reduce((s, e) => s + e.amount, 0);
-      return sum + Math.max(debt.totalAmount - paid, 0);
-    }, 0);
+    return debts
+      .filter((d) => d.tipo !== "cartao" && d.totalAmount > 0)
+      .reduce((sum, debt) => {
+        const paid = entries.filter((e) => e.debtId === debt.id).reduce((s, e) => s + e.amount, 0);
+        return sum + Math.max(debt.totalAmount - paid, 0);
+      }, 0);
   }, [debts, entries]);
 
   if (totalPendenteGeral === 0 && totalDividasRestante === 0) return null;
