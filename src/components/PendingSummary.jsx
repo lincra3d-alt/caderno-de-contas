@@ -1,11 +1,15 @@
 import React, { useState, useMemo } from "react";
 import { AlertCircle } from "lucide-react";
+import { formatBRL, monthLabel } from "../lib/theme";
 
-function formatBRL(value) {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+// Último dia do mês, para fechar a conta do período sem cortar nada.
+function fimDoMes(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return `${monthKey}-${String(last).padStart(2, "0")}`;
 }
 
-export default function PendingSummary({ entries, debts }) {
+export default function PendingSummary({ entries, debts, selectedMonth }) {
   const [untilDate, setUntilDate] = useState("");
 
   const pendingEntries = useMemo(
@@ -13,15 +17,20 @@ export default function PendingSummary({ entries, debts }) {
     [entries]
   );
 
-  const totalPendenteGeral = useMemo(
-    () => pendingEntries.reduce((s, e) => s + e.amount, 0),
-    [pendingEntries]
+  // Por padrão só conta até o fim do mês escolhido. Somar tudo que está lançado
+  // para frente daria um número enorme e sem sentido quando existem despesas
+  // fixas, que se repetem sem fim.
+  const limite = untilDate || fimDoMes(selectedMonth || new Date().toISOString().slice(0, 7));
+
+  const totalNoPeriodo = useMemo(
+    () => pendingEntries.filter((e) => e.date <= limite).reduce((s, e) => s + e.amount, 0),
+    [pendingEntries, limite]
   );
 
-  const totalAteAData = useMemo(() => {
-    if (!untilDate) return null;
-    return pendingEntries.filter((e) => e.date <= untilDate).reduce((s, e) => s + e.amount, 0);
-  }, [pendingEntries, untilDate]);
+  const totalFuturo = useMemo(
+    () => pendingEntries.filter((e) => e.date > limite).reduce((s, e) => s + e.amount, 0),
+    [pendingEntries, limite]
+  );
 
   // Cartões de crédito não entram aqui: eles têm a própria seção de fatura.
   const totalDividasRestante = useMemo(() => {
@@ -33,7 +42,7 @@ export default function PendingSummary({ entries, debts }) {
       }, 0);
   }, [debts, entries]);
 
-  if (totalPendenteGeral === 0 && totalDividasRestante === 0) return null;
+  if (pendingEntries.length === 0 && totalDividasRestante === 0) return null;
 
   return (
     <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
@@ -47,7 +56,7 @@ export default function PendingSummary({ entries, debts }) {
         </div>
       )}
 
-      {totalPendenteGeral > 0 && (
+      {pendingEntries.length > 0 && (
         <div style={{ flex: "1 1 260px", border: "1px solid var(--expense)", padding: "14px 16px", background: "rgba(180,67,42,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--expense)" }}>
@@ -63,11 +72,18 @@ export default function PendingSummary({ entries, debts }) {
             />
           </div>
           <div className="mono" style={{ fontSize: 19, fontWeight: 700 }}>
-            {formatBRL(untilDate ? totalAteAData : totalPendenteGeral)}
+            {formatBRL(totalNoPeriodo)}
           </div>
           <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 2 }}>
-            {untilDate ? `a pagar até ${untilDate.split("-").reverse().join("/")}` : "a pagar no total"}
+            {untilDate
+              ? `a pagar até ${untilDate.split("-").reverse().join("/")}`
+              : `a pagar até o fim de ${monthLabel(selectedMonth || new Date().toISOString().slice(0, 7))}`}
           </div>
+          {totalFuturo > 0 && (
+            <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6, paddingTop: 6, borderTop: "1px dotted var(--line)" }}>
+              Depois dessa data já tem mais <strong className="mono">{formatBRL(totalFuturo)}</strong> lançado.
+            </div>
+          )}
         </div>
       )}
     </div>

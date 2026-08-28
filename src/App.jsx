@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check, BookOpen, Pencil, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check, BookOpen, Pencil, Eye, EyeOff, Repeat, Search, X } from "lucide-react";
 import { db, watchAuthState, signInWithGoogle, signOutUser } from "./firebase";
 import { useHousehold } from "./hooks/useHousehold";
 import { useMemberProfiles } from "./hooks/useMemberProfiles";
@@ -24,6 +24,9 @@ import {
   query,
   orderBy,
 } from "firebase/firestore";
+
+// Quantos meses de uma despesa fixa são lançados de uma vez.
+const RECURRING_MONTHS = 12;
 
 function LoginScreen() {
   const [busy, setBusy] = useState(false);
@@ -300,13 +303,14 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [balanceScope, setBalanceScope] = useState("mes"); // mes | total
   const [hideBalance, setHideBalance] = useState(false);
+  const [busca, setBusca] = useState("");
 
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("despesa");
   const [category, setCategory] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [parcelado, setParcelado] = useState(false);
+  const [repeticao, setRepeticao] = useState("unica"); // unica | parcelada | fixa
   const [numParcelas, setNumParcelas] = useState(2);
   const [jaPago, setJaPago] = useState(true);
   const [showNewCategory, setShowNewCategory] = useState(false);
@@ -326,6 +330,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
   useEffect(() => {
     setAlsoAddTo(new Set());
     setCardId("");
+    setBusca("");
   }, [householdId]);
 
   // Se o cartão escolhido for excluído, limpa a seleção do formulário.
@@ -412,6 +417,24 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
     [visibleEntries, selectedMonth]
   );
 
+  // Com busca ativa procuramos em todos os meses, senão o filtro esconderia
+  // justamente o que a pessoa está tentando achar.
+  const termoBusca = busca.trim().toLowerCase();
+  const listaExtrato = useMemo(() => {
+    if (!termoBusca) return monthEntries;
+    return visibleEntries
+      .filter((e) => {
+        const alvo = `${e.desc} ${e.category} ${e.authorName || ""}`.toLowerCase();
+        return alvo.includes(termoBusca);
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [termoBusca, monthEntries, visibleEntries]);
+
+  const totalBusca = useMemo(
+    () => listaExtrato.reduce((s, e) => s + (e.type === "receita" ? e.amount : -e.amount), 0),
+    [listaExtrato]
+  );
+
   async function handleAddCategory() {
     if (!newCategoryName.trim()) return;
     await addCategory(newCategoryName);
@@ -450,7 +473,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
     const parcelasCount = Math.max(2, Math.min(48, parseInt(numParcelas, 10) || 2));
 
     try {
-      if (parcelado && parcelasCount > 1) {
+      if (repeticao === "parcelada" && parcelasCount > 1) {
         await Promise.all(
           targets.map(async (hid) => {
             const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${hid.slice(0, 4)}`;
@@ -464,6 +487,27 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                   installmentGroupId: groupId,
                   installmentIndex: i + 1,
                   installmentTotal: parcelasCount,
+                })
+              )
+            );
+          })
+        );
+      } else if (repeticao === "fixa") {
+        // Despesa fixa não tem total fechado: lançamos os próximos meses e,
+        // quando estiver acabando, o app avisa para estender.
+        await Promise.all(
+          targets.map(async (hid) => {
+            const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${hid.slice(0, 4)}`;
+            await Promise.all(
+              Array.from({ length: RECURRING_MONTHS }, (_, i) =>
+                addDoc(collection(db, "households", hid, "lancamentos"), {
+                  ...base,
+                  status: i === 0 ? status : "pendente",
+                  desc: desc.trim(),
+                  amount: value,
+                  date: addMonths(date, i),
+                  recurringGroupId: groupId,
+                  recorrente: true,
                 })
               )
             );
@@ -483,7 +527,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
       }
       setDesc("");
       setAmount("");
-      setParcelado(false);
+      setRepeticao("unica");
       setNumParcelas(2);
       setJaPago(true);
       setAlsoAddTo(new Set());
@@ -493,10 +537,14 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
     }
   }
 
-  async function handleDelete(id) {
+  async function handleDelete(id, escopo = "este") {
     if (!householdId) return;
+    const alvo = entries.find((e) => e.id === id);
     try {
-      await deleteDoc(doc(db, "households", householdId, "lancamentos", id));
+      const alvos = alvo ? alvosDoEscopo(alvo, escopo) : [{ id }];
+      await Promise.all(
+        alvos.map((e) => deleteDoc(doc(db, "households", householdId, "lancamentos", e.id)))
+      );
       setSelectedEntry(null);
     } catch (err) {
       console.error(err);
@@ -504,9 +552,150 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
     }
   }
 
-  async function handleUpdate(id, changes) {
-    if (!householdId) return;
+  // Encerra uma despesa fixa: apaga deste mês em diante e mantém o histórico.
+  async function handleEndRecurring(entry) {
+    if (!householdId || !entry.recurringGroupId) return;
+    const futuras = entries.filter(
+      (e) => e.recurringGroupId === entry.recurringGroupId && e.date >= entry.date
+    );
+    const ok = window.confirm(
+      `Encerrar "${entry.desc}" a partir de ${formatDateShort(entry.date)}?\n\n${futuras.length} ${futuras.length === 1 ? "lançamento vai ser apagado" : "lançamentos vão ser apagados"}. O que já passou continua no histórico.`
+    );
+    if (!ok) return;
     try {
+      await Promise.all(
+        futuras.map((e) => deleteDoc(doc(db, "households", householdId, "lancamentos", e.id)))
+      );
+      setSelectedEntry(null);
+    } catch (err) {
+      console.error(err);
+      setSaveError(true);
+    }
+  }
+
+  // Lança mais meses de uma despesa fixa que está chegando ao fim.
+  async function handleExtendRecurring(entry) {
+    if (!householdId || !entry.recurringGroupId) return;
+    const grupo = entries.filter((e) => e.recurringGroupId === entry.recurringGroupId);
+    if (grupo.length === 0) return;
+    const ultima = grupo.reduce((max, e) => (e.date > max.date ? e : max), grupo[0]);
+    try {
+      await Promise.all(
+        Array.from({ length: RECURRING_MONTHS }, (_, i) =>
+          addDoc(collection(db, "households", householdId, "lancamentos"), {
+            type: ultima.type,
+            category: ultima.category,
+            status: "pendente",
+            addedBy: user.uid,
+            authorName: user.displayName,
+            authorPhoto: user.photoURL,
+            ...(ultima.cardId ? { cardId: ultima.cardId } : {}),
+            desc: ultima.desc,
+            amount: ultima.amount,
+            date: addMonths(ultima.date, i + 1),
+            recurringGroupId: ultima.recurringGroupId,
+            recorrente: true,
+          })
+        )
+      );
+    } catch (err) {
+      console.error(err);
+      setSaveError(true);
+    }
+  }
+
+  // Todos os lançamentos irmãos de um lançamento (parcelas ou meses da fixa).
+  function grupoDe(entry) {
+    if (entry.installmentGroupId) {
+      return entries
+        .filter((e) => e.installmentGroupId === entry.installmentGroupId)
+        .sort((a, b) => (a.installmentIndex || 0) - (b.installmentIndex || 0));
+    }
+    if (entry.recurringGroupId) {
+      return entries
+        .filter((e) => e.recurringGroupId === entry.recurringGroupId)
+        .sort((a, b) => a.date.localeCompare(b.date));
+    }
+    return [entry];
+  }
+
+  function alvosDoEscopo(entry, escopo) {
+    if (escopo === "este" || (!entry.installmentGroupId && !entry.recurringGroupId)) return [entry];
+    const g = grupoDe(entry);
+    if (escopo === "todos") return g;
+    return g.filter((e) => e.date >= entry.date);
+  }
+
+  // Converte um lançamento (avulso ou parcelado) em despesa fixa.
+  async function handleConvertToFixed(entry) {
+    if (!householdId) return;
+    const base = entry.desc.replace(/\s*\(\d+\/\d+\)$/, "");
+    try {
+      // Sai o que existia deste mês em diante, entra a fixa no lugar.
+      const aRemover = entry.installmentGroupId
+        ? grupoDe(entry).filter((e) => e.date >= entry.date)
+        : [entry];
+      await Promise.all(
+        aRemover.map((e) => deleteDoc(doc(db, "households", householdId, "lancamentos", e.id)))
+      );
+
+      const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-fix`;
+      await Promise.all(
+        Array.from({ length: RECURRING_MONTHS }, (_, i) =>
+          addDoc(collection(db, "households", householdId, "lancamentos"), {
+            type: entry.type,
+            category: entry.category,
+            status: i === 0 ? entry.status || "pago" : "pendente",
+            addedBy: user.uid,
+            authorName: user.displayName,
+            authorPhoto: user.photoURL,
+            ...(entry.cardId ? { cardId: entry.cardId } : {}),
+            desc: base,
+            amount: entry.amount,
+            date: addMonths(entry.date, i),
+            recurringGroupId: groupId,
+            recorrente: true,
+          })
+        )
+      );
+      setSelectedEntry(null);
+    } catch (err) {
+      console.error(err);
+      setSaveError(true);
+    }
+  }
+
+  async function handleUpdate(id, changes, escopo = "este") {
+    if (!householdId) return;
+    const alvo = entries.find((e) => e.id === id);
+    if (!alvo) return;
+
+    try {
+      if (escopo !== "este" && (alvo.installmentGroupId || alvo.recurringGroupId)) {
+        const alvos = alvosDoEscopo(alvo, escopo);
+        const total = alvo.installmentTotal;
+        await Promise.all(
+          alvos.map((e) => {
+            const proprios = { ...changes };
+            // A data de cada irmão continua no mês dele: só o dia acompanha.
+            if (e.id !== id && changes.date) {
+              const dia = changes.date.slice(8);
+              proprios.date = `${e.date.slice(0, 7)}-${dia}`;
+            }
+            // Na parcelada, a numeração é recolocada no fim da descrição.
+            if (e.installmentGroupId && changes.desc) {
+              proprios.desc = `${changes.desc} (${e.installmentIndex}/${total})`;
+            }
+            return updateDoc(doc(db, "households", householdId, "lancamentos", e.id), proprios);
+          })
+        );
+        setSelectedEntry(null);
+        return;
+      }
+
+      if (alvo.installmentGroupId && changes.desc) {
+        changes = { ...changes, desc: `${changes.desc} (${alvo.installmentIndex}/${alvo.installmentTotal})` };
+      }
       await updateDoc(doc(db, "households", householdId, "lancamentos", id), changes);
 
       // Se a parcela editada tiver um link compartilhado, mantém o link em dia.
@@ -692,7 +881,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
               </div>
             </div>
 
-            <PendingSummary entries={entries} debts={debts} />
+            <PendingSummary entries={entries} debts={debts} selectedMonth={selectedMonth} />
 
             <CategoryBreakdown entries={monthEntries} />
 
@@ -713,7 +902,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                 <input
                   type="text"
                   inputMode="decimal"
-                  placeholder={parcelado ? "Valor de cada parcela" : "0,00"}
+                  placeholder={repeticao === "parcelada" ? "Valor de cada parcela" : repeticao === "fixa" ? "Valor por mês" : "0,00"}
                   value={amount}
                   onChange={(ev) => setAmount(ev.target.value)}
                   className="mono"
@@ -794,41 +983,75 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-soft)", cursor: "pointer", flexWrap: "wrap" }}>
-                  <input type="checkbox" checked={parcelado} onChange={(e) => setParcelado(e.target.checked)} />
-                  <span>Parcelar essa compra</span>
-                  {parcelado && (
-                    <>
-                      <span>em</span>
-                      <input
-                        type="number"
-                        min={2}
-                        max={48}
-                        value={numParcelas}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          if (raw === "") {
-                            setNumParcelas("");
-                            return;
-                          }
-                          const n = parseInt(raw, 10);
-                          if (!Number.isNaN(n)) setNumParcelas(n);
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--ink-soft)" }}>
+                    SE REPETE?
+                  </span>
+                  <div style={{ display: "flex", border: "1px solid var(--line)" }}>
+                    {[
+                      ["unica", "Não, é só uma vez"],
+                      ["parcelada", "Parcelada"],
+                      ["fixa", "Fixa, todo mês"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setRepeticao(key)}
+                        className="cdc-toggle"
+                        style={{
+                          padding: "7px 12px",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          background: repeticao === key ? "var(--ink)" : "#fff",
+                          color: repeticao === key ? "var(--paper)" : "var(--ink-soft)",
                         }}
-                        onBlur={() => {
-                          setNumParcelas((prev) => {
-                            const n = parseInt(prev, 10);
-                            return Math.max(2, Math.min(48, Number.isNaN(n) ? 2 : n));
-                          });
-                        }}
-                        className="mono"
-                        style={{ width: 50, padding: "4px 6px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 12 }}
-                      />
-                      <span>
-                        vezes de {amount ? formatBRL(parseFloat(amount.replace(",", ".")) || 0) : "R$0,00"} (total {amount ? formatBRL((parseFloat(amount.replace(",", ".")) || 0) * (numParcelas || 0)) : "R$0,00"})
-                      </span>
-                    </>
-                  )}
-                </label>
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {repeticao === "parcelada" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-soft)", flexWrap: "wrap" }}>
+                    <span>Em</span>
+                    <input
+                      type="number"
+                      min={2}
+                      max={48}
+                      value={numParcelas}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "") {
+                          setNumParcelas("");
+                          return;
+                        }
+                        const n = parseInt(raw, 10);
+                        if (!Number.isNaN(n)) setNumParcelas(n);
+                      }}
+                      onBlur={() => {
+                        setNumParcelas((prev) => {
+                          const n = parseInt(prev, 10);
+                          return Math.max(2, Math.min(48, Number.isNaN(n) ? 2 : n));
+                        });
+                      }}
+                      className="mono"
+                      style={{ width: 50, padding: "4px 6px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 12 }}
+                    />
+                    <span>
+                      vezes de {amount ? formatBRL(parseFloat(amount.replace(",", ".")) || 0) : "R$0,00"} (total {amount ? formatBRL((parseFloat(amount.replace(",", ".")) || 0) * (numParcelas || 0)) : "R$0,00"})
+                    </span>
+                  </div>
+                )}
+
+                {repeticao === "fixa" && (
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+                    Vai entrar sozinha todo mês, a partir da data escolhida, sem valor total fechado.
+                    Quando parar de pagar, é só abrir o lançamento e encerrar.
+                  </div>
+                )}
 
                 {type === "despesa" && (
                   <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-soft)", cursor: "pointer" }}>
@@ -882,7 +1105,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                 <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: "var(--ink-soft)" }}>
                   EXTRATO {viewMode === "meu" ? "· SÓ O SEU" : ""}
                 </div>
-                {monthEntries.length > 0 && (
+                {!termoBusca && monthEntries.length > 0 && (
                   <div className="mono" style={{ fontSize: 11, color: "var(--ink-soft)" }}>
                     saídas do mês: <span style={{ fontWeight: 700, color: "var(--expense)" }}>
                       {formatBRL(monthEntries.filter((e) => e.type === "despesa").reduce((s, e) => s + e.amount, 0))}
@@ -891,40 +1114,82 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                 )}
               </div>
 
-              <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
-                {availableMonths.map((m) => (
+              <div style={{ position: "relative", marginBottom: 12 }}>
+                <Search
+                  size={15}
+                  style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--ink-soft)", pointerEvents: "none" }}
+                />
+                <input
+                  type="text"
+                  value={busca}
+                  onChange={(ev) => setBusca(ev.target.value)}
+                  placeholder="Procurar por descrição, categoria ou pessoa"
+                  style={{ width: "100%", padding: "10px 34px", border: "1px solid var(--line)", background: "#fff", color: "var(--ink)", fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" }}
+                />
+                {busca && (
                   <button
-                    key={m}
-                    onClick={() => setSelectedMonth(m)}
-                    className="cdc-tab mono"
-                    style={{
-                      flex: "0 0 auto",
-                      padding: "7px 14px",
-                      border: "1px solid var(--line)",
-                      cursor: "pointer",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      background: selectedMonth === m ? "var(--ink)" : "#fff",
-                      color: selectedMonth === m ? "var(--paper)" : "var(--ink-soft)",
-                      whiteSpace: "nowrap",
-                    }}
+                    onClick={() => setBusca("")}
+                    aria-label="Limpar busca"
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", display: "flex", padding: 4 }}
                   >
-                    {monthLabel(m)}
+                    <X size={14} />
                   </button>
-                ))}
+                )}
               </div>
+
+              {!termoBusca && (
+                <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
+                  {availableMonths.map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setSelectedMonth(m)}
+                      className="cdc-tab mono"
+                      style={{
+                        flex: "0 0 auto",
+                        padding: "7px 14px",
+                        border: "1px solid var(--line)",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: selectedMonth === m ? "var(--ink)" : "#fff",
+                        color: selectedMonth === m ? "var(--paper)" : "var(--ink-soft)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {monthLabel(m)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {termoBusca && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 10, fontSize: 12, color: "var(--ink-soft)" }}>
+                  <span>
+                    {listaExtrato.length === 0
+                      ? "Nada encontrado"
+                      : `${listaExtrato.length} ${listaExtrato.length === 1 ? "lançamento encontrado" : "lançamentos encontrados"} em todos os meses`}
+                  </span>
+                  {listaExtrato.length > 0 && (
+                    <span className="mono">
+                      resultado: <strong style={{ color: totalBusca >= 0 ? "var(--income)" : "var(--expense)" }}>{formatBRL(totalBusca)}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
 
               {loading ? (
                 <div style={{ padding: "36px 16px", textAlign: "center", color: "var(--ink-soft)", fontSize: 14 }}>
                   Carregando...
                 </div>
-              ) : monthEntries.length === 0 ? (
+              ) : listaExtrato.length === 0 ? (
                 <div style={{ padding: "36px 16px", textAlign: "center", color: "var(--ink-soft)", border: "1px dashed var(--line)", fontSize: 14 }}>
-                  Nenhum lançamento em {monthLabel(selectedMonth)}.
+                  {termoBusca
+                    ? `Nenhum lançamento com "${busca.trim()}".`
+                    : `Nenhum lançamento em ${monthLabel(selectedMonth)}.`}
                 </div>
               ) : (
                 <div className="cdc-card">
-                  {monthEntries.map((e) => {
+                  {listaExtrato.map((e) => {
                     const pending = e.type === "despesa" && (e.status || "pago") === "pendente";
                     return (
                       <div
@@ -941,6 +1206,11 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                             <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontWeight: 500 }}>{e.desc}</span>
                             {e.installmentGroupId && (
                               <span className="cdc-badge" style={{ flex: "0 0 auto" }}>{e.installmentIndex}/{e.installmentTotal}</span>
+                            )}
+                            {e.recorrente && (
+                              <span className="cdc-badge" style={{ flex: "0 0 auto" }} title="Despesa fixa, repete todo mês">
+                                <Repeat size={9} /> fixa
+                              </span>
                             )}
                           </div>
                           <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1000,6 +1270,9 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
           onTogglePaid={handleTogglePaid}
           onDelete={handleDelete}
           onUpdate={handleUpdate}
+          onEndRecurring={handleEndRecurring}
+          onExtendRecurring={handleExtendRecurring}
+          onConvertToFixed={handleConvertToFixed}
         />
       )}
     </div>
