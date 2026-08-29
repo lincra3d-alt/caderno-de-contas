@@ -24,6 +24,8 @@ import {
   Scissors,
   PiggyBank,
   Church,
+  Landmark,
+  Handshake,
 } from "lucide-react";
 
 // Cada regra casa por palavra chave dentro do nome da categoria.
@@ -45,7 +47,9 @@ const RULES = [
   [["compra", "shopping", "loja"], ShoppingCart, "#8C5A2B"],
   [["roupa", "vestu", "calcado", "calçado"], Shirt, "#7A4F8C"],
   [["viagem", "passagem", "hotel", "ferias", "férias"], Plane, "#3C6E9F"],
-  [["educa", "escola", "faculdade", "curso", "livro"], GraduationCap, "#4C5C6E"],
+  [["educa", "estudo", "escola", "faculdade", "curso", "livro", "ingles", "inglês", "idioma"], GraduationCap, "#4C5C6E"],
+  [["emprestimo", "empréstimo", "financiamento", "consignado", "banco"], Landmark, "#5B5F8A"],
+  [["acordo", "divida", "dívida", "negocia", "serasa", "parcelamento"], Handshake, "#8C5A2B"],
   [["pet", "cachorro", "gato", "animal"], Dog, "#8A5A2B"],
   [["filho", "crianc", "crianç", "bebe", "bebê", "escolar"], Baby, "#C2612F"],
   [["presente", "doacao", "doação", "aniversario", "aniversário"], Gift, "#B08A34"],

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check, BookOpen, Pencil, Eye, EyeOff, Repeat, Search, X } from "lucide-react";
+import { Plus, Trash2, ArrowUpRight, ArrowDownRight, LogOut, Users, Copy, Check, BookOpen, Pencil, Eye, EyeOff, Repeat, Search, X, Circle, CheckCircle2 } from "lucide-react";
 import { db, watchAuthState, signInWithGoogle, signOutUser } from "./firebase";
 import { useHousehold } from "./hooks/useHousehold";
 import { useMemberProfiles } from "./hooks/useMemberProfiles";
@@ -304,6 +304,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
   const [balanceScope, setBalanceScope] = useState("mes"); // mes | total
   const [hideBalance, setHideBalance] = useState(false);
   const [busca, setBusca] = useState("");
+  const [statusFiltro, setStatusFiltro] = useState("todas"); // todas | pendentes | pagas
 
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
@@ -312,7 +313,8 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [repeticao, setRepeticao] = useState("unica"); // unica | parcelada | fixa
   const [numParcelas, setNumParcelas] = useState(2);
-  const [jaPago, setJaPago] = useState(true);
+  // Um lançamento novo entra como "a pagar": marcar como pago é a exceção.
+  const [jaPago, setJaPago] = useState(false);
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [alsoAddTo, setAlsoAddTo] = useState(() => new Set());
@@ -430,8 +432,36 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [termoBusca, monthEntries, visibleEntries]);
 
-  const totalBusca = useMemo(
-    () => listaExtrato.reduce((s, e) => s + (e.type === "receita" ? e.amount : -e.amount), 0),
+  const contagemStatus = useMemo(() => {
+    let pendentes = 0;
+    let pagas = 0;
+    listaExtrato.forEach((e) => {
+      if (e.type === "despesa" && (e.status || "pago") === "pendente") pendentes += 1;
+      else pagas += 1;
+    });
+    return { todas: listaExtrato.length, pendentes, pagas };
+  }, [listaExtrato]);
+
+  const listaFinal = useMemo(() => {
+    if (statusFiltro === "pendentes") {
+      return listaExtrato.filter((e) => e.type === "despesa" && (e.status || "pago") === "pendente");
+    }
+    if (statusFiltro === "pagas") {
+      return listaExtrato.filter((e) => !(e.type === "despesa" && (e.status || "pago") === "pendente"));
+    }
+    return listaExtrato;
+  }, [listaExtrato, statusFiltro]);
+
+  const totalListaFinal = useMemo(
+    () => listaFinal.reduce((s, e) => s + (e.type === "receita" ? e.amount : -e.amount), 0),
+    [listaFinal]
+  );
+
+  const totalPendenteLista = useMemo(
+    () =>
+      listaExtrato
+        .filter((e) => e.type === "despesa" && (e.status || "pago") === "pendente")
+        .reduce((s, e) => s + e.amount, 0),
     [listaExtrato]
   );
 
@@ -529,7 +559,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
       setAmount("");
       setRepeticao("unica");
       setNumParcelas(2);
-      setJaPago(true);
+      setJaPago(false);
       setAlsoAddTo(new Set());
     } catch (err) {
       console.error(err);
@@ -1054,10 +1084,34 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                 )}
 
                 {type === "despesa" && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-soft)", cursor: "pointer" }}>
-                    <input type="checkbox" checked={jaPago} onChange={(e) => setJaPago(e.target.checked)} />
-                    Já paguei essa conta
-                  </label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--ink-soft)" }}>
+                      SITUAÇÃO
+                    </span>
+                    <div style={{ display: "flex", border: "1px solid var(--line)" }}>
+                      <button
+                        type="button"
+                        onClick={() => setJaPago(false)}
+                        className="cdc-toggle"
+                        style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: !jaPago ? "var(--expense)" : "#fff", color: !jaPago ? "#fff" : "var(--ink-soft)" }}
+                      >
+                        <Circle size={12} /> Ainda vou pagar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setJaPago(true)}
+                        className="cdc-toggle"
+                        style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: jaPago ? "var(--income)" : "#fff", color: jaPago ? "#fff" : "var(--ink-soft)" }}
+                      >
+                        <CheckCircle2 size={12} /> Já paguei
+                      </button>
+                    </div>
+                    {repeticao !== "unica" && (
+                      <span style={{ fontSize: 11, color: "var(--ink-soft)" }}>
+                        vale para {repeticao === "parcelada" ? "a primeira parcela" : "o primeiro mês"}, o resto entra a pagar
+                      </span>
+                    )}
+                  </div>
                 )}
 
                 {otherHouseholds.length > 0 && (
@@ -1162,18 +1216,57 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                 </div>
               )}
 
-              {termoBusca && (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 10, fontSize: 12, color: "var(--ink-soft)" }}>
-                  <span>
-                    {listaExtrato.length === 0
-                      ? "Nada encontrado"
-                      : `${listaExtrato.length} ${listaExtrato.length === 1 ? "lançamento encontrado" : "lançamentos encontrados"} em todos os meses`}
-                  </span>
-                  {listaExtrato.length > 0 && (
-                    <span className="mono">
-                      resultado: <strong style={{ color: totalBusca >= 0 ? "var(--income)" : "var(--expense)" }}>{formatBRL(totalBusca)}</strong>
-                    </span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                <div style={{ display: "flex", border: "1px solid var(--line)" }}>
+                  {[
+                    ["todas", "Todas", contagemStatus.todas],
+                    ["pendentes", "Pendentes", contagemStatus.pendentes],
+                    ["pagas", "Pagas", contagemStatus.pagas],
+                  ].map(([key, label, n]) => (
+                    <button
+                      key={key}
+                      onClick={() => setStatusFiltro(key)}
+                      className="cdc-tab"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "7px 13px",
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background:
+                          statusFiltro === key
+                            ? key === "pendentes"
+                              ? "var(--expense)"
+                              : key === "pagas"
+                              ? "var(--income)"
+                              : "var(--ink)"
+                            : "#fff",
+                        color: statusFiltro === key ? "#fff" : "var(--ink-soft)",
+                      }}
+                    >
+                      {label}
+                      <span className="mono" style={{ fontSize: 10, opacity: 0.8 }}>{n}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mono" style={{ fontSize: 11, color: "var(--ink-soft)" }}>
+                  {statusFiltro === "pendentes" ? (
+                    <>falta pagar: <strong style={{ color: "var(--expense)" }}>{formatBRL(totalPendenteLista)}</strong></>
+                  ) : (
+                    <>resultado: <strong style={{ color: totalListaFinal >= 0 ? "var(--income)" : "var(--expense)" }}>{formatBRL(totalListaFinal)}</strong></>
                   )}
+                </div>
+              </div>
+
+              {termoBusca && (
+                <div style={{ marginBottom: 10, fontSize: 12, color: "var(--ink-soft)" }}>
+                  {listaExtrato.length === 0
+                    ? "Nada encontrado"
+                    : `${listaExtrato.length} ${listaExtrato.length === 1 ? "lançamento encontrado" : "lançamentos encontrados"} em todos os meses`}
                 </div>
               )}
 
@@ -1181,15 +1274,19 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                 <div style={{ padding: "36px 16px", textAlign: "center", color: "var(--ink-soft)", fontSize: 14 }}>
                   Carregando...
                 </div>
-              ) : listaExtrato.length === 0 ? (
+              ) : listaFinal.length === 0 ? (
                 <div style={{ padding: "36px 16px", textAlign: "center", color: "var(--ink-soft)", border: "1px dashed var(--line)", fontSize: 14 }}>
                   {termoBusca
                     ? `Nenhum lançamento com "${busca.trim()}".`
+                    : statusFiltro === "pendentes"
+                    ? `Nada pendente em ${monthLabel(selectedMonth)}. Tudo em dia!`
+                    : statusFiltro === "pagas"
+                    ? `Nenhuma conta paga em ${monthLabel(selectedMonth)}.`
                     : `Nenhum lançamento em ${monthLabel(selectedMonth)}.`}
                 </div>
               ) : (
                 <div className="cdc-card">
-                  {listaExtrato.map((e) => {
+                  {listaFinal.map((e) => {
                     const pending = e.type === "despesa" && (e.status || "pago") === "pendente";
                     return (
                       <div
