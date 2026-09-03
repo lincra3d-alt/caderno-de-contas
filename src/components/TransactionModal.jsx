@@ -40,7 +40,7 @@ function ScopePicker({ value, onChange, label }) {
   );
 }
 
-export default function TransactionModal({ entry, allEntries, debts, categories, onClose, onTogglePaid, onDelete, onUpdate, onEndRecurring, onExtendRecurring, onConvertToFixed }) {
+export default function TransactionModal({ entry, allEntries, debts, categories, cartoes, onClose, onTogglePaid, onDelete, onUpdate, onEndRecurring, onExtendRecurring, onConvertToFixed }) {
   const [shareState, setShareState] = useState("idle"); // idle | busy | copied | error
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -94,6 +94,8 @@ export default function TransactionModal({ entry, allEntries, debts, categories,
       category: entry.category,
       date: entry.date,
       type: entry.type,
+      cardId: entry.cardId || "",
+      faturaMes: entry.faturaMes || entry.date.slice(0, 7),
     });
     setEditScope("este");
     setEditing(true);
@@ -112,6 +114,10 @@ export default function TransactionModal({ entry, allEntries, debts, categories,
         category: form.category,
         date: form.date,
         type: form.type,
+        // Sem cartão o campo vira string vazia, que o App entende como
+        // "tirar do cartão" e limpa também a fatura.
+        cardId: form.cardId || "",
+        faturaMes: form.cardId ? form.faturaMes : "",
       },
       emGrupo ? editScope : "este"
     );
@@ -257,6 +263,33 @@ export default function TransactionModal({ entry, allEntries, debts, categories,
                   {!(categories || []).includes(form.category) && <option value={form.category}>{form.category}</option>}
                 </select>
               </div>
+
+              {form.type === "despesa" && (cartoes || []).length > 0 && (
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 4 }}>Pago com</div>
+                    <select
+                      className="cdc-field"
+                      value={form.cardId}
+                      onChange={(e) => setForm({ ...form, cardId: e.target.value })}
+                    >
+                      <option value="">Dinheiro ou débito</option>
+                      {cartoes.map((c) => (<option key={c.id} value={c.id}>Cartão {c.nome}</option>))}
+                    </select>
+                  </div>
+                  {form.cardId && (
+                    <div style={{ flex: "1 1 130px" }}>
+                      <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 4 }}>Entra na fatura de</div>
+                      <input
+                        className="cdc-field mono"
+                        type="month"
+                        value={form.faturaMes}
+                        onChange={(e) => setForm({ ...form, faturaMes: e.target.value })}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 4 }}>Tipo</div>

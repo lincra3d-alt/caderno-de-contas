@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Plus, ChevronDown, ChevronUp, Trash2, CreditCard, CheckCircle2 } from "lucide-react";
+import { Plus, ChevronDown, ChevronUp, Trash2, CreditCard, CheckCircle2, Pencil } from "lucide-react";
 import { db } from "../firebase";
 import { collection, addDoc, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { formatBRL, formatDateShort, monthLabel } from "../lib/theme";
@@ -10,17 +10,16 @@ import CategoryIcon from "../lib/categoryIcons";
 // Documentos com tipo "cartao" são cartões de crédito. Os antigos, sem tipo,
 // são as contas a quitar do modelo anterior.
 
-// Em qual fatura a compra cai. Se comprou depois do fechamento, entra na
-// fatura do mês seguinte, que é como o cartão funciona de verdade.
-export function faturaKey(dateISO, diaFechamento) {
-  const [y, m, d] = dateISO.split("-").map(Number);
-  const fecha = Number(diaFechamento) || 0;
-  if (!fecha || d <= fecha) return `${y}-${String(m).padStart(2, "0")}`;
-  const next = new Date(y, m, 1);
-  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+// Em qual fatura a compra cai.
+// O mês é decidido na hora de lançar e fica gravado em `faturaMes`, porque
+// só ali dá para saber se foi uma compra nova (que o fechamento empurra para
+// o mês seguinte) ou uma parcela, cuja data já é o mês dela.
+// Lançamentos antigos, sem `faturaMes`, entram na fatura do próprio mês.
+export function faturaDoLancamento(entry) {
+  return entry.faturaMes || entry.date.slice(0, 7);
 }
 
-export default function CardsSection({ householdId, user, cards, entries, selectedMonth }) {
+export default function CardsSection({ householdId, user, cards, entries, selectedMonth, onSelectEntry }) {
   const [showForm, setShowForm] = useState(false);
   const [nome, setNome] = useState("");
   const [limite, setLimite] = useState("");
@@ -28,6 +27,33 @@ export default function CardsSection({ householdId, user, cards, entries, select
   const [vencimento, setVencimento] = useState("");
   const [openId, setOpenId] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [editandoId, setEditandoId] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+
+  function abrirEdicao(card) {
+    setEditForm({
+      nome: card.nome,
+      limite: card.limite ? String(card.limite).replace(".", ",") : "",
+      fechamento: String(card.diaFechamento || ""),
+      vencimento: String(card.diaVencimento || ""),
+    });
+    setEditandoId(card.id);
+  }
+
+  async function salvarEdicao(e, card) {
+    e.preventDefault();
+    if (!editForm.nome.trim()) return;
+    const valor = parseFloat(String(editForm.limite).replace(",", "."));
+    setBusy(true);
+    await updateDoc(doc(db, "households", householdId, "dividas", card.id), {
+      nome: editForm.nome.trim(),
+      limite: valor > 0 ? valor : 0,
+      diaFechamento: Math.min(28, Math.max(1, parseInt(editForm.fechamento, 10) || 1)),
+      diaVencimento: Math.min(28, Math.max(1, parseInt(editForm.vencimento, 10) || 10)),
+    });
+    setBusy(false);
+    setEditandoId(null);
+  }
 
   const cartoes = useMemo(() => cards.filter((c) => c.tipo === "cartao"), [cards]);
   const legado = useMemo(() => cards.filter((c) => c.tipo !== "cartao"), [cards]);
@@ -164,7 +190,7 @@ export default function CardsSection({ householdId, user, cards, entries, select
 
       {cartoes.map((card) => {
         const compras = entries.filter(
-          (e) => e.cardId === card.id && faturaKey(e.date, card.diaFechamento) === selectedMonth
+          (e) => e.cardId === card.id && faturaDoLancamento(e) === selectedMonth
         );
         const totalFatura = compras.reduce((s, e) => s + e.amount, 0);
         const emAberto = entries
@@ -229,7 +255,13 @@ export default function CardsSection({ householdId, user, cards, entries, select
                     .slice()
                     .sort((a, b) => a.date.localeCompare(b.date))
                     .map((c) => (
-                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 12 }}>
+                      <div
+                        key={c.id}
+                        className="cdc-row"
+                        onClick={() => onSelectEntry && onSelectEntry(c)}
+                        title="Abrir para editar, mudar de fatura ou excluir"
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 6px", fontSize: 12 }}
+                      >
                         <CategoryIcon category={c.category} size={26} iconSize={13} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.desc}</div>
@@ -238,6 +270,7 @@ export default function CardsSection({ householdId, user, cards, entries, select
                         <div className="mono" style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", color: (c.status || "pago") === "pendente" ? "var(--expense)" : "var(--ink-soft)", whiteSpace: "nowrap" }}>
                           {formatBRL(c.amount)}
                         </div>
+                        <Pencil size={12} color="var(--ink-soft)" style={{ flex: "0 0 auto" }} />
                       </div>
                     ))
                 )}
@@ -254,6 +287,13 @@ export default function CardsSection({ householdId, user, cards, entries, select
                     </button>
                   )}
                   <button
+                    onClick={() => abrirEdicao(card)}
+                    className="cdc-btn"
+                    style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid var(--line)", background: "#fff", color: "var(--ink)", padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    <Pencil size={14} /> Editar cartão
+                  </button>
+                  <button
                     onClick={() => handleDeleteCard(card)}
                     className="cdc-btn"
                     style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid var(--line)", background: "#fff", color: "var(--expense)", padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
@@ -261,6 +301,64 @@ export default function CardsSection({ householdId, user, cards, entries, select
                     <Trash2 size={14} /> Excluir cartão
                   </button>
                 </div>
+
+                {editandoId === card.id && editForm && (
+                  <form onSubmit={(e) => salvarEdicao(e, card)} style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dotted var(--line)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--ink-soft)", marginBottom: 10 }}>
+                      EDITANDO O CARTÃO
+                    </div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                      <input
+                        type="text"
+                        value={editForm.nome}
+                        onChange={(ev) => setEditForm({ ...editForm, nome: ev.target.value })}
+                        placeholder="Nome do cartão"
+                        style={{ flex: "2 1 170px", padding: "8px 10px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 13 }}
+                      />
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={editForm.limite}
+                        onChange={(ev) => setEditForm({ ...editForm, limite: ev.target.value })}
+                        placeholder="Limite total"
+                        className="mono"
+                        style={{ flex: "1 1 110px", padding: "8px 10px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 13 }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)" }}>
+                        Fecha dia
+                        <input
+                          type="number"
+                          min={1}
+                          max={28}
+                          value={editForm.fechamento}
+                          onChange={(ev) => setEditForm({ ...editForm, fechamento: ev.target.value })}
+                          className="mono"
+                          style={{ width: 56, padding: "7px 8px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 13 }}
+                        />
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-soft)" }}>
+                        Vence dia
+                        <input
+                          type="number"
+                          min={1}
+                          max={28}
+                          value={editForm.vencimento}
+                          onChange={(ev) => setEditForm({ ...editForm, vencimento: ev.target.value })}
+                          className="mono"
+                          style={{ width: 56, padding: "7px 8px", border: "1px solid var(--line)", background: "var(--paper)", fontSize: 13 }}
+                        />
+                      </label>
+                      <button type="submit" disabled={busy} className="cdc-btn" style={{ marginLeft: "auto", border: "none", background: "var(--ink)", color: "var(--paper)", padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                        Salvar
+                      </button>
+                      <button type="button" onClick={() => setEditandoId(null)} style={{ border: "none", background: "none", color: "var(--ink-soft)", fontSize: 12, cursor: "pointer" }}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             )}
           </div>

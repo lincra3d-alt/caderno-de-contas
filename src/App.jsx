@@ -23,10 +23,21 @@ import {
   onSnapshot,
   query,
   orderBy,
+  deleteField,
 } from "firebase/firestore";
 
 // Quantos meses de uma despesa fixa são lançados de uma vez.
 const RECURRING_MONTHS = 12;
+
+// Compra nova feita depois do fechamento entra na fatura do mês seguinte.
+// Parcelas e despesas fixas não passam por aqui: a data delas já é o mês.
+function faturaMesDaCompra(dateISO, diaFechamento) {
+  const [y, m, d] = dateISO.split("-").map(Number);
+  const fecha = Number(diaFechamento) || 0;
+  if (!fecha || d <= fecha) return `${y}-${String(m).padStart(2, "0")}`;
+  const next = new Date(y, m, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+}
 
 function LoginScreen() {
   const [busy, setBusy] = useState(false);
@@ -502,6 +513,16 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
 
     const parcelasCount = Math.max(2, Math.min(48, parseInt(numParcelas, 10) || 2));
 
+    // Mês da fatura: só a compra avulsa é empurrada pelo fechamento.
+    // Parcela e despesa fixa já nascem com uma data por mês.
+    const cartaoEscolhido = cartoes.find((c) => c.id === cardId);
+    const faturaBase =
+      cartaoEscolhido && repeticao === "unica"
+        ? faturaMesDaCompra(date, cartaoEscolhido.diaFechamento)
+        : null;
+    const faturaDoMesDe = (dataISO) =>
+      cartaoEscolhido ? { faturaMes: faturaBase || dataISO.slice(0, 7) } : {};
+
     try {
       if (repeticao === "parcelada" && parcelasCount > 1) {
         await Promise.all(
@@ -514,6 +535,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                   desc: `${desc.trim()} (${i + 1}/${parcelasCount})`,
                   amount: value,
                   date: addMonths(date, i),
+                  ...faturaDoMesDe(addMonths(date, i)),
                   installmentGroupId: groupId,
                   installmentIndex: i + 1,
                   installmentTotal: parcelasCount,
@@ -536,6 +558,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
                   desc: desc.trim(),
                   amount: value,
                   date: addMonths(date, i),
+                  ...faturaDoMesDe(addMonths(date, i)),
                   recurringGroupId: groupId,
                   recorrente: true,
                 })
@@ -551,6 +574,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
               desc: desc.trim(),
               amount: value,
               date,
+              ...faturaDoMesDe(date),
             })
           )
         );
@@ -619,7 +643,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
             addedBy: user.uid,
             authorName: user.displayName,
             authorPhoto: user.photoURL,
-            ...(ultima.cardId ? { cardId: ultima.cardId } : {}),
+            ...(ultima.cardId ? { cardId: ultima.cardId, faturaMes: addMonths(ultima.date, i + 1).slice(0, 7) } : {}),
             desc: ultima.desc,
             amount: ultima.amount,
             date: addMonths(ultima.date, i + 1),
@@ -679,7 +703,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
             addedBy: user.uid,
             authorName: user.displayName,
             authorPhoto: user.photoURL,
-            ...(entry.cardId ? { cardId: entry.cardId } : {}),
+            ...(entry.cardId ? { cardId: entry.cardId, faturaMes: addMonths(entry.date, i).slice(0, 7) } : {}),
             desc: base,
             amount: entry.amount,
             date: addMonths(entry.date, i),
@@ -693,6 +717,16 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
       console.error(err);
       setSaveError(true);
     }
+  }
+
+  // Campo vazio vindo do formulário significa "remover", e o Firestore
+  // precisa de deleteField() para isso, não de string vazia.
+  function limparVazios(obj) {
+    const saida = {};
+    Object.entries(obj).forEach(([k, v]) => {
+      saida[k] = v === "" ? deleteField() : v;
+    });
+    return saida;
   }
 
   async function handleUpdate(id, changes, escopo = "este") {
@@ -716,7 +750,12 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
             if (e.installmentGroupId && changes.desc) {
               proprios.desc = `${changes.desc} (${e.installmentIndex}/${total})`;
             }
-            return updateDoc(doc(db, "households", householdId, "lancamentos", e.id), proprios);
+            // Cada irmão fica na fatura do próprio mês, senão todas as
+            // parcelas cairiam juntas numa fatura só.
+            if (e.id !== id && proprios.cardId) {
+              proprios.faturaMes = (proprios.date || e.date).slice(0, 7);
+            }
+            return updateDoc(doc(db, "households", householdId, "lancamentos", e.id), limparVazios(proprios));
           })
         );
         setSelectedEntry(null);
@@ -726,7 +765,11 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
       if (alvo.installmentGroupId && changes.desc) {
         changes = { ...changes, desc: `${changes.desc} (${alvo.installmentIndex}/${alvo.installmentTotal})` };
       }
-      await updateDoc(doc(db, "households", householdId, "lancamentos", id), changes);
+      // Só deriva a fatura da data quando o formulário não mandou uma.
+      if (changes.faturaMes === undefined && alvo.cardId && changes.date) {
+        changes = { ...changes, faturaMes: changes.date.slice(0, 7) };
+      }
+      await updateDoc(doc(db, "households", householdId, "lancamentos", id), limparVazios(changes));
 
       // Se a parcela editada tiver um link compartilhado, mantém o link em dia.
       const target = entries.find((e) => e.id === id);
@@ -1152,6 +1195,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
               cards={debts}
               entries={entries}
               selectedMonth={selectedMonth}
+              onSelectEntry={setSelectedEntry}
             />
 
             <div>
@@ -1363,6 +1407,7 @@ function Ledger({ user, householdId, households, switchHousehold, createHousehol
           allEntries={entries}
           debts={debts}
           categories={categories}
+          cartoes={cartoes}
           onClose={() => setSelectedEntry(null)}
           onTogglePaid={handleTogglePaid}
           onDelete={handleDelete}
